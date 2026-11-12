@@ -36,6 +36,8 @@ Cpu* cpu_init(void* mem, CpuReadHandler read, CpuWriteHandler write, CpuIdleHand
   cpu->read = read;
   cpu->write = write;
   cpu->idle = idle;
+  cpu->instructionHook = NULL;
+  cpu->instructionHookContext = NULL;
   return cpu;
 }
 
@@ -81,7 +83,12 @@ void cpu_handleState(Cpu* cpu, StateHandler* sh) {
   sh_handleWords(sh, &cpu->a, &cpu->x, &cpu->y, &cpu->sp, &cpu->pc, &cpu->dp, NULL);
 }
 
-void cpu_runOpcode(Cpu* cpu) {
+void cpu_setInstructionHook(Cpu* cpu, CpuInstructionHook hook, void* context) {
+  cpu->instructionHook = hook;
+  cpu->instructionHookContext = context;
+}
+
+CpuStep cpu_runOpcode(Cpu* cpu) {
   if(cpu->resetWanted) {
     cpu->resetWanted = false;
     // reset: brk/interrupt without writes
@@ -97,11 +104,11 @@ void cpu_runOpcode(Cpu* cpu) {
     cpu_setFlags(cpu, cpu_getFlags(cpu)); // updates x and m flags, clears upper half of x and y if needed
     cpu->k = 0;
     cpu->pc = cpu_readWord(cpu, 0xfffc, 0xfffd, false);
-    return;
+    return cpuStepGuest;
   }
   if(cpu->stopped) {
     cpu_idleWait(cpu);
-    return;
+    return cpuStepGuest;
   }
   if(cpu->waiting) {
     if(cpu->irqWanted || cpu->nmiWanted) {
@@ -109,20 +116,32 @@ void cpu_runOpcode(Cpu* cpu) {
       cpu_idle(cpu);
       cpu_checkInt(cpu);
       cpu_idle(cpu);
-      return;
+      return cpuStepGuest;
     } else {
       cpu_idleWait(cpu);
-      return;
+      return cpuStepGuest;
     }
   }
   // not stopped or waiting, execute a opcode or go to interrupt
   if(cpu->intWanted) {
     cpu_read(cpu, (cpu->k << 16) | cpu->pc);
     cpu_doInterrupt(cpu);
-  } else {
-    uint8_t opcode = cpu_readOpcode(cpu);
-    cpu_doOpcode(cpu, opcode);
+    return cpuStepGuest;
   }
+  if(cpu->instructionHook != NULL) {
+    switch(cpu->instructionHook(cpu->instructionHookContext, cpu)) {
+      case cpuHookContinue: break;
+      case cpuHookHandled: {
+        // the handled call ends on an instruction boundary, where interrupts are polled
+        cpu_checkInt(cpu);
+        return cpuStepNative;
+      }
+      case cpuHookStop: return cpuStepStop;
+    }
+  }
+  uint8_t opcode = cpu_readOpcode(cpu);
+  cpu_doOpcode(cpu, opcode);
+  return cpuStepGuest;
 }
 
 void cpu_nmi(Cpu* cpu) {

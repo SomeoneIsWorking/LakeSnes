@@ -13,6 +13,22 @@ typedef void (*CpuIdleHandler)(void* mem, bool waiting);
 
 typedef struct Cpu Cpu;
 
+// What the before-instruction hook did at an instruction boundary.
+typedef enum CpuHookAction {
+  cpuHookContinue, // run the guest instruction at k:pc
+  cpuHookHandled,  // the hook did the work and moved k:pc; no guest instruction runs
+  cpuHookStop      // nothing runs; the caller's run loop returns
+} CpuHookAction;
+
+typedef CpuHookAction (*CpuInstructionHook)(void* context, Cpu* cpu);
+
+// What one cpu_runOpcode call did.
+typedef enum CpuStep {
+  cpuStepGuest,  // a guest instruction, interrupt entry, reset or wait cycle
+  cpuStepNative, // the hook handled the instruction
+  cpuStepStop    // the hook asked the run to stop
+} CpuStep;
+
 struct Cpu {
   // reference to memory handler, pointers to read/write/idle handlers
   void* mem;
@@ -47,13 +63,17 @@ struct Cpu {
   bool intWanted;
   bool intDelay;
   bool resetWanted;
+  // before-instruction hook, not part of the machine state
+  CpuInstructionHook instructionHook;
+  void* instructionHookContext;
 };
 
 Cpu* cpu_init(void* mem, CpuReadHandler read, CpuWriteHandler write, CpuIdleHandler idle);
 void cpu_free(Cpu* cpu);
 void cpu_reset(Cpu* cpu, bool hard);
 void cpu_handleState(Cpu* cpu, StateHandler* sh);
-void cpu_runOpcode(Cpu* cpu);
+CpuStep cpu_runOpcode(Cpu* cpu);
+void cpu_setInstructionHook(Cpu* cpu, CpuInstructionHook hook, void* context);
 void cpu_nmi(Cpu* cpu);
 void cpu_setIrq(Cpu* cpu, bool state);
 

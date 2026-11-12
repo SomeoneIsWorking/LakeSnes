@@ -115,14 +115,15 @@ void snes_handleState(Snes* snes, StateHandler* sh) {
   if(!sh->saving) build_accesstime(snes, false);
 }
 
-void snes_runFrame(Snes* snes) {
+bool snes_runFrame(Snes* snes) {
   while(snes->inVblank) {
-    cpu_runOpcode(snes->cpu);
+    if(cpu_runOpcode(snes->cpu) == cpuStepStop) return false;
   }
   uint32_t frame = snes->frames;
   while(!snes->inVblank && frame == snes->frames) {
-    cpu_runOpcode(snes->cpu);
+    if(cpu_runOpcode(snes->cpu) == cpuStepStop) return false;
   }
+  return true;
 }
 
 void snes_runCycles(Snes* snes, int cycles) {
@@ -545,6 +546,34 @@ static void build_accesstime(Snes* snes, bool recalc) {
   for (int i = start; i < 0x1000000; i++) {
     snes->accessTime[i] = snes_getAccessTime(snes, i);
   }
+}
+
+uint8_t snes_peek(Snes* snes, uint32_t adr) {
+  uint8_t bank = adr >> 16;
+  uint16_t low = adr & 0xffff;
+  if(bank == 0x7e || bank == 0x7f) return snes->ram[((bank & 1) << 16) | low];
+  if(bank < 0x40 || (bank >= 0x80 && bank < 0xc0)) {
+    if(low < 0x2000) return snes->ram[low];
+    if(low < 0x8000) return snes->openBus; // i/o registers are never read for a peek
+  }
+  return cart_read(snes->cart, bank, low);
+}
+
+void snes_poke(Snes* snes, uint32_t adr, uint8_t val) {
+  uint8_t bank = adr >> 16;
+  uint16_t low = adr & 0xffff;
+  if(bank == 0x7e || bank == 0x7f) {
+    snes->ram[((bank & 1) << 16) | low] = val;
+    return;
+  }
+  if(bank < 0x40 || (bank >= 0x80 && bank < 0xc0)) {
+    if(low < 0x2000) {
+      snes->ram[low] = val;
+      return;
+    }
+    if(low < 0x8000) return; // i/o registers are never written by a poke
+  }
+  cart_write(snes->cart, bank, low, val);
 }
 
 uint8_t snes_read(Snes* snes, uint32_t adr) {

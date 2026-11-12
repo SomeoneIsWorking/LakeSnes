@@ -1,6 +1,14 @@
 # LakeSnes
 A SNES emulator, in C
 
+## This fork
+
+SomeoneIsWorking's fork of [dinkc64/LakeSnes](https://github.com/dinkc64/LakeSnes), kept on the
+`snesport` branch as the core of [snesport](https://github.com/SomeoneIsWorking/snesport). It adds
+a CMake library target (`find_package(lakesnes)`, `lakesnes::core`), a before-instruction hook
+(`cpu_setInstructionHook`) for native code by guest address, side-effect-free `snes_peek` and
+`snes_poke`, per-instance state, and a silent ROM loader. The emulation itself follows upstream.
+
 ## About
 
 This is a SNES emulator, written in C, mostly as a followup on my [earlier Javascript version](https://github.com/angelo-wf/SnesJs). The main drive behind rewriting it in C was C's speed. The JS version could barely run at 20 FPS on my system, whereas this C version runs at full speed.

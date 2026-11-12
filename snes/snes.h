@@ -69,7 +69,8 @@ Snes* snes_init(void);
 void snes_free(Snes* snes);
 void snes_reset(Snes* snes, bool hard);
 void snes_handleState(Snes* snes, StateHandler* sh);
-void snes_runFrame(Snes* snes);
+// runs to the start of the next vblank; false when the instruction hook stopped it first
+bool snes_runFrame(Snes* snes);
 // used by dma, cpu
 void snes_runCycles(Snes* snes, int cycles);
 void snes_syncCycles(Snes* snes, bool start, int syncCycles);
@@ -77,6 +78,9 @@ uint8_t snes_readBBus(Snes* snes, uint8_t adr);
 void snes_writeBBus(Snes* snes, uint8_t adr, uint8_t val);
 uint8_t snes_read(Snes* snes, uint32_t adr);
 void snes_write(Snes* snes, uint32_t adr, uint8_t val);
+// memory map access without bus side effects or open-bus updates; i/o registers are skipped
+uint8_t snes_peek(Snes* snes, uint32_t adr);
+void snes_poke(Snes* snes, uint32_t adr, uint8_t val);
 void snes_cpuIdle(void* mem, bool waiting);
 uint8_t snes_cpuRead(void* mem, uint32_t adr);
 void snes_cpuWrite(void* mem, uint32_t adr, uint8_t val);

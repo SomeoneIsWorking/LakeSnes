@@ -51,7 +51,6 @@ static void readHeader(const uint8_t* data, int length, int location, CartHeader
 bool snes_loadRom(Snes* snes, const uint8_t* data, int length) {
   // if smaller than smallest possible, don't load
   if(length < 0x8000) {
-    printf("Failed to load rom: rom to small (%d bytes)\n", length);
     return false;
   }
   // check headers
@@ -82,7 +81,6 @@ bool snes_loadRom(Snes* snes, const uint8_t* data, int length) {
   }
   // check if we can load it
   if(headers[used].cartType > 4) {
-    printf("Failed to load rom: unsupported type (%d)\n", headers[used].cartType);
     return false;
   }
   // expand to a power of 2
@@ -107,15 +105,6 @@ bool snes_loadRom(Snes* snes, const uint8_t* data, int length) {
   if (headers[used].exCoprocessor == 0x10) {
     headers[used].cartType = 4; // cx4
   }
-  // load it
-  const char* typeNames[5] = {"(none)", "LoROM", "HiROM", "ExHiROM", "CX4"};
-  printf("Loaded %s rom (%s)\n", typeNames[headers[used].cartType], headers[used].pal ? "PAL" : "NTSC");
-  printf("\"%s\"\n", headers[used].name);
-  int bankSize = used >= 2 ? 0x10000 : 0x8000; // 0, 1: LoROM, else HiROM
-  printf(
-    "%s banks: %d, ramsize: %d%s, coprocessor: %x\n",
-    bankSize == 0x8000 ? "32K" : "64K", newLength / bankSize, headers[used].chips > 0 ? headers[used].ramSize : 0, (headers[used].hasBattery) ? " (battery-backed)" : "", headers[used].exCoprocessor
-  );
   cart_load(
     snes->cart, headers[used].cartType,
     newData, newLength, headers[used].chips > 0 ? headers[used].ramSize : 0,
