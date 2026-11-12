@@ -12,10 +12,15 @@ typedef struct Ppu Ppu;
 #define PPU_MAX_MARGIN 128
 #define PPU_MARGIN_TILE_VRAM (-1)
 #define PPU_MARGIN_TILE_TRANSPARENT (-2)
-// Supplies the tilemap word for a background pixel in a margin: x and y are the layer's tilemap
-// coordinates with scroll applied, unwrapped. Returns the word, PPU_MARGIN_TILE_VRAM to read the
-// tilemap as the hardware would, or PPU_MARGIN_TILE_TRANSPARENT.
-typedef int (*PpuMarginTile)(void* context, int layer, int x, int y);
+// A background pixel in a margin: the layer and its tilemap coordinates, scroll applied, unwrapped.
+typedef struct PpuMarginPixel {
+  int layer;
+  int x;
+  int y;
+} PpuMarginPixel;
+// Returns the tilemap word for the pixel, PPU_MARGIN_TILE_VRAM to read the tilemap as the hardware
+// would, or PPU_MARGIN_TILE_TRANSPARENT.
+typedef int (*PpuMarginTile)(void* context, const PpuMarginPixel* pixel);
 
 #include "snes.h"
 #include "statehandler.h"

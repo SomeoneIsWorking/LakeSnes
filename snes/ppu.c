@@ -484,7 +484,8 @@ static int ppu_getPixel(Ppu* ppu, int x, int y, bool sub, int* r, int* g, int* b
           if (lx != ppu->layerCache[curLayer]) {
             int marginTile = PPU_MARGIN_TILE_VRAM;
             if((x < 0 || x > 255) && ppu->marginTile != NULL) {
-              marginTile = ppu->marginTile(ppu->marginContext, curLayer, lx, ly);
+              PpuMarginPixel query = {curLayer, lx, ly};
+              marginTile = ppu->marginTile(ppu->marginContext, &query);
             }
             if(marginTile == PPU_MARGIN_TILE_VRAM) {
               ppu_getPixelForBgLayer(ppu, lx & 0x3ff, ly & 0x3ff, curLayer);
