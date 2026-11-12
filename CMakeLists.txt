@@ -17,7 +17,7 @@ add_library(lakesnes_core STATIC
 	snes/statehandler.c
 )
 add_library(lakesnes::core ALIAS lakesnes_core)
-set_target_properties(lakesnes_core PROPERTIES OUTPUT_NAME lakesnes C_STANDARD 11 C_STANDARD_REQUIRED ON POSITION_INDEPENDENT_CODE ON)
+set_target_properties(lakesnes_core PROPERTIES OUTPUT_NAME lakesnes EXPORT_NAME core C_STANDARD 11 C_STANDARD_REQUIRED ON POSITION_INDEPENDENT_CODE ON)
 target_include_directories(lakesnes_core PUBLIC
 	$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/snes>
 	$<INSTALL_INTERFACE:include/lakesnes>
