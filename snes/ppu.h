@@ -124,6 +124,12 @@ struct Ppu {
   bool countersLatched;
   uint8_t ppu1openBus;
   uint8_t ppu2openBus;
+  // render caches, derived from the registers above
+  uint32_t brightScale;
+  int layerCache[4];
+  uint16_t bgPixelBuf[4];
+  uint8_t bgPrioBuf[4];
+  bool bgWindowState[6]; // 0-3 (bg) 4 (spr) 5 (colorwind)
   // pixel buffer (xbgr)
   // times 2 for even and odd frame
   uint8_t pixelBuffer[512 * 4 * 239 * 2];

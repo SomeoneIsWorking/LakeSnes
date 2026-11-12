@@ -61,6 +61,8 @@ struct Snes {
   // misc
   bool fastMem;
   uint8_t openBus;
+  // access time per address in master cycles, derived from fastMem
+  uint8_t* accessTime;
 };
 
 Snes* snes_init(void);

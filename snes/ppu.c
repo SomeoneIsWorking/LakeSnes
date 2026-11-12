@@ -63,14 +63,9 @@ static const int spriteSizes[8][2] = {
 
 // caches & luts to reduce cpu load
 static uint32_t bright_lut[0x10];
-static uint32_t bright_now;
 static uint8_t color_clamp_lut[0x20 * 3];
 static uint8_t *color_clamp_lut_i20 = &color_clamp_lut[0x20];
 
-static int layerCache[4] = { -1, -1, -1, -1 };
-static uint16_t bg_pixel_buf[4];
-static uint8_t bg_prio_buf[4];
-static bool bg_window_state[6]; // 0-3 (bg) 4 (spr) 5 (colorwind)
 
 static void ppu_handlePixel(Ppu* ppu, int x, int y);
 static int ppu_getPixel(Ppu* ppu, int x, int y, bool sub, int* r, int* g, int* b);
@@ -109,7 +104,7 @@ void ppu_reset(Ppu* ppu) {
       color_clamp_lut[i] = 0x1f;
     }
   }
-  bright_now = bright_lut[0xf]; // default
+  ppu->brightScale = bright_lut[0xf]; // default
 
   memset(ppu->vram, 0, sizeof(ppu->vram));
   ppu->vramPointer = 0;
@@ -262,6 +257,7 @@ void ppu_handleState(Ppu* ppu, StateHandler* sh) {
   sh_handleByteArray(sh, ppu->highOam, 0x20);
   sh_handleByteArray(sh, ppu->objPixelBuffer, 256);
   sh_handleByteArray(sh, ppu->objPriorityBuffer, 256);
+  if(!sh->saving) ppu->brightScale = bright_lut[ppu->brightness];
 }
 
 bool ppu_checkOverscan(Ppu* ppu) {
@@ -296,7 +292,7 @@ void ppu_runLine(Ppu* ppu, int line) {
   // NOTE: if frameskipping, return here. (ppu_evaluateSprites() must run regardless)
   // actual line
   if(ppu->mode == 7) ppu_calculateMode7Starts(ppu, line);
-  layerCache[0] = layerCache[1] = layerCache[2] = layerCache[3] = -1;
+  ppu->layerCache[0] = ppu->layerCache[1] = ppu->layerCache[2] = ppu->layerCache[3] = -1;
   for(int x = 0; x < 256; x+=4) {
     ppu_handlePixel(ppu, x + 0, line);
     ppu_handlePixel(ppu, x + 1, line);
@@ -311,15 +307,15 @@ static void ppu_handlePixel(Ppu* ppu, int x, int y) {
   int b = 0, b2 = 0;
   bool halfColor = ppu->halfColor;
   // cache for speed-up
-  bg_window_state[0] = ppu_getWindowState(ppu, 0, x);
-  bg_window_state[1] = ppu_getWindowState(ppu, 1, x);
-  bg_window_state[2] = ppu_getWindowState(ppu, 2, x);
-  bg_window_state[3] = ppu_getWindowState(ppu, 3, x);
-  bg_window_state[4] = ppu_getWindowState(ppu, 4, x);
-  bg_window_state[5] = ppu_getWindowState(ppu, 5, x);
+  ppu->bgWindowState[0] = ppu_getWindowState(ppu, 0, x);
+  ppu->bgWindowState[1] = ppu_getWindowState(ppu, 1, x);
+  ppu->bgWindowState[2] = ppu_getWindowState(ppu, 2, x);
+  ppu->bgWindowState[3] = ppu_getWindowState(ppu, 3, x);
+  ppu->bgWindowState[4] = ppu_getWindowState(ppu, 4, x);
+  ppu->bgWindowState[5] = ppu_getWindowState(ppu, 5, x);
   if(!ppu->forcedBlank) {
     int mainLayer = ppu_getPixel(ppu, x, y, false, &r, &g, &b);
-    bool colorWindowState = bg_window_state[5];
+    bool colorWindowState = ppu->bgWindowState[5];
     bool bClipIfHires = false;
     if(
       ppu->clipMode == 3 ||
@@ -396,13 +392,13 @@ static void ppu_handlePixel(Ppu* ppu, int x, int y) {
   }
   uint32_t *dest = (uint32_t*)&ppu->pixelBuffer[((y - 1) + (ppu->evenFrame ? 0 : 239)) * 2048 + x * 8];
 
-  dest[0] = ((((b2 << 3) | (b2 >> 2)) * bright_now) >> 16) << 0 |
-            ((((g2 << 3) | (g2 >> 2)) * bright_now) >> 16) << 8 |
-            ((((r2 << 3) | (r2 >> 2)) * bright_now) >> 16) << 16;
+  dest[0] = ((((b2 << 3) | (b2 >> 2)) * ppu->brightScale) >> 16) << 0 |
+            ((((g2 << 3) | (g2 >> 2)) * ppu->brightScale) >> 16) << 8 |
+            ((((r2 << 3) | (r2 >> 2)) * ppu->brightScale) >> 16) << 16;
 
-  dest[1] = ((((b << 3) | (b >> 2)) * bright_now) >> 16) << 0 |
-            ((((g << 3) | (g >> 2)) * bright_now) >> 16) << 8 |
-            ((((r << 3) | (r >> 2)) * bright_now) >> 16) << 16;
+  dest[1] = ((((b << 3) | (b >> 2)) * ppu->brightScale) >> 16) << 0 |
+            ((((g << 3) | (g >> 2)) * ppu->brightScale) >> 16) << 8 |
+            ((((r << 3) | (r >> 2)) * ppu->brightScale) >> 16) << 16;
 }
 
 static int ppu_getPixel(Ppu* ppu, int x, int y, bool sub, int* r, int* g, int* b) {
@@ -418,11 +414,11 @@ static int ppu_getPixel(Ppu* ppu, int x, int y, bool sub, int* r, int* g, int* b
     bool layerActive = false;
     if(!sub) {
       layerActive = ppu->layer[curLayer].mainScreenEnabled && (
-        !ppu->layer[curLayer].mainScreenWindowed || !bg_window_state[curLayer]
+        !ppu->layer[curLayer].mainScreenWindowed || !ppu->bgWindowState[curLayer]
       );
     } else {
       layerActive = ppu->layer[curLayer].subScreenEnabled && (
-        !ppu->layer[curLayer].subScreenWindowed || !bg_window_state[curLayer]
+        !ppu->layer[curLayer].subScreenWindowed || !ppu->bgWindowState[curLayer]
       );
     }
     if(layerActive) {
@@ -450,11 +446,11 @@ static int ppu_getPixel(Ppu* ppu, int x, int y, bool sub, int* r, int* g, int* b
           if(ppu->mode == 2 || ppu->mode == 4 || ppu->mode == 6) {
             ppu_handleOPT(ppu, curLayer, &lx, &ly);
           }
-          if (lx != layerCache[curLayer]) {
+          if (lx != ppu->layerCache[curLayer]) {
             ppu_getPixelForBgLayer(ppu, lx & 0x3ff, ly & 0x3ff, curLayer);
-            layerCache[curLayer] = lx;
+            ppu->layerCache[curLayer] = lx;
           }
-          pixel = (bg_prio_buf[curLayer] == curPriority) ? bg_pixel_buf[curLayer] : 0;
+          pixel = (ppu->bgPrioBuf[curLayer] == curPriority) ? ppu->bgPixelBuf[curLayer] : 0;
         }
       } else {
         // get a pixel from the sprite buffer
@@ -592,8 +588,8 @@ static inline void ppu_getPixelForBgLayer(Ppu* ppu, int x, int y, int layer) {
     } break;
   }
   // return cgram index, or 0 if transparent, palette number in bits 10-8 for 8-color layers
-  bg_pixel_buf[layer] = (pixel == 0) ? 0 : (paletteNum << bitDepth) + pixel;
-  bg_prio_buf[layer] = tilePrio;
+  ppu->bgPixelBuf[layer] = (pixel == 0) ? 0 : (paletteNum << bitDepth) + pixel;
+  ppu->bgPrioBuf[layer] = tilePrio;
 }
 
 static void ppu_calculateMode7Starts(Ppu* ppu, int y) {
@@ -896,7 +892,7 @@ void ppu_write(Ppu* ppu, uint8_t adr, uint8_t val) {
     case 0x00: {
       // TODO: oam address reset when written on first line of vblank, (and when forced blank is disabled?)
       ppu->brightness = val & 0xf;
-      bright_now = bright_lut[ppu->brightness];
+      ppu->brightScale = bright_lut[ppu->brightness];
       ppu->forcedBlank = val & 0x80;
       break;
     }
