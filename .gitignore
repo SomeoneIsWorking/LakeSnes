@@ -18,3 +18,4 @@ sdl2
 *.dll
 *.res
 *.dSYM
+/build/
