@@ -83,6 +83,14 @@ void cpu_handleState(Cpu* cpu, StateHandler* sh) {
   sh_handleWords(sh, &cpu->a, &cpu->x, &cpu->y, &cpu->sp, &cpu->pc, &cpu->dp, NULL);
 }
 
+uint8_t cpu_getP(Cpu* cpu) {
+  return cpu_getFlags(cpu);
+}
+
+void cpu_setP(Cpu* cpu, uint8_t value) {
+  cpu_setFlags(cpu, value);
+}
+
 void cpu_setInstructionHook(Cpu* cpu, CpuInstructionHook hook, void* context) {
   cpu->instructionHook = hook;
   cpu->instructionHookContext = context;

@@ -73,6 +73,9 @@ void cpu_free(Cpu* cpu);
 void cpu_reset(Cpu* cpu, bool hard);
 void cpu_handleState(Cpu* cpu, StateHandler* sh);
 CpuStep cpu_runOpcode(Cpu* cpu);
+// P as the 65816 packs it; setting it applies the e/m/x register-width rules
+uint8_t cpu_getP(Cpu* cpu);
+void cpu_setP(Cpu* cpu, uint8_t value);
 void cpu_setInstructionHook(Cpu* cpu, CpuInstructionHook hook, void* context);
 void cpu_nmi(Cpu* cpu);
 void cpu_setIrq(Cpu* cpu, bool state);
