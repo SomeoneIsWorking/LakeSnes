@@ -12,11 +12,17 @@ typedef struct Ppu Ppu;
 #define PPU_MAX_MARGIN 128
 #define PPU_MARGIN_TILE_VRAM (-1)
 #define PPU_MARGIN_TILE_TRANSPARENT (-2)
-// A background pixel in a margin: the layer and its tilemap coordinates, scroll applied, unwrapped.
+// A background pixel in a margin.
 typedef struct PpuMarginPixel {
   int layer;
+  // tilemap coordinates, scroll applied, unwrapped
   int x;
   int y;
+  // screen column (negative in the left margin) and line
+  int screenX;
+  int line;
+  // the tilemap word the hardware would read there
+  uint16_t tilemapAddress;
 } PpuMarginPixel;
 // Returns the tilemap word for the pixel, PPU_MARGIN_TILE_VRAM to read the tilemap as the hardware
 // would, or PPU_MARGIN_TILE_TRANSPARENT.

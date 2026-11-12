@@ -71,6 +71,7 @@ static void ppu_handlePixel(Ppu* ppu, int x, int y);
 static int ppu_getPixel(Ppu* ppu, int x, int y, bool sub, int* r, int* g, int* b);
 static uint16_t ppu_getOffsetValue(Ppu* ppu, int col, int row);
 static inline void ppu_getPixelForBgLayer(Ppu* ppu, int x, int y, int layer);
+static inline uint16_t ppu_bgTilemapAddress(Ppu* ppu, int x, int y, int layer);
 static inline void ppu_decodeBgPixel(Ppu* ppu, int x, int y, int layer, uint16_t tile);
 static void ppu_evaluateMarginSprites(Ppu* ppu, int line);
 static int ppu_marginIndex(Ppu* ppu, int x);
@@ -484,7 +485,7 @@ static int ppu_getPixel(Ppu* ppu, int x, int y, bool sub, int* r, int* g, int* b
           if (lx != ppu->layerCache[curLayer]) {
             int marginTile = PPU_MARGIN_TILE_VRAM;
             if((x < 0 || x > 255) && ppu->marginTile != NULL) {
-              PpuMarginPixel query = {curLayer, lx, ly};
+              PpuMarginPixel query = {curLayer, lx, ly, x, y, ppu_bgTilemapAddress(ppu, lx & 0x3ff, ly & 0x3ff, curLayer)};
               marginTile = ppu->marginTile(ppu->marginContext, &query);
             }
             if(marginTile == PPU_MARGIN_TILE_VRAM) {
@@ -572,7 +573,10 @@ static uint16_t ppu_getOffsetValue(Ppu* ppu, int col, int row) {
 }
 
 static inline void ppu_getPixelForBgLayer(Ppu* ppu, int x, int y, int layer) {
-  // figure out address of tilemap word and read it
+  ppu_decodeBgPixel(ppu, x, y, layer, ppu->vram[ppu_bgTilemapAddress(ppu, x, y, layer)]);
+}
+
+static inline uint16_t ppu_bgTilemapAddress(Ppu* ppu, int x, int y, int layer) {
   bool wideTiles = ppu->bgLayer[layer].bigTiles || ppu->mode == 5 || ppu->mode == 6;
   int tileBitsX = wideTiles ? 4 : 3;
   int tileHighBitX = wideTiles ? 0x200 : 0x100;
@@ -581,7 +585,7 @@ static inline void ppu_getPixelForBgLayer(Ppu* ppu, int x, int y, int layer) {
   uint16_t tilemapAdr = ppu->bgLayer[layer].tilemapAdr + (((y >> tileBitsY) & 0x1f) << 5 | ((x >> tileBitsX) & 0x1f));
   if((x & tileHighBitX) && ppu->bgLayer[layer].tilemapWider) tilemapAdr += 0x400;
   if((y & tileHighBitY) && ppu->bgLayer[layer].tilemapHigher) tilemapAdr += ppu->bgLayer[layer].tilemapWider ? 0x800 : 0x400;
-  ppu_decodeBgPixel(ppu, x, y, layer, ppu->vram[tilemapAdr & 0x7fff]);
+  return tilemapAdr & 0x7fff;
 }
 
 static inline void ppu_decodeBgPixel(Ppu* ppu, int x, int y, int layer, uint16_t tile) {
