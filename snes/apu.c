@@ -20,8 +20,10 @@ static const uint8_t iplDeltas[0x40] = {
   0xdc, 0xa2, 0x2f, 0xd7, 0xa6, 0x06, 0xd3, 0x84, 0xc4, 0xdc, 0xb8, 0x7f, 0x02, 0x86, 0x47, 0x6a,
 };
 
-static const double apuCyclesPerMaster = (32040 * 32) / (1364 * 262 * 60.0);
-static const double apuCyclesPerMasterPal = (32040 * 32) / (1364 * 312 * 50.0);
+// a 32040 Hz DSP rate (32 SPC cycles per sample) over the true master clocks; the frame rate is
+// not exactly 60 or 50 Hz
+static const double apuCyclesPerMaster = (32040 * 32) / 21477272.0;
+static const double apuCyclesPerMasterPal = (32040 * 32) / 21281370.0;
 
 static void apu_cycle(Apu* apu);
 
