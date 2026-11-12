@@ -7,6 +7,16 @@
 
 typedef struct Ppu Ppu;
 
+// Widest margin rendered on each side of the 256-pixel view. Sprite x is 9 bits, so a wider
+// margin could not tell a right-margin sprite from one far off the left edge.
+#define PPU_MAX_MARGIN 128
+#define PPU_MARGIN_TILE_VRAM (-1)
+#define PPU_MARGIN_TILE_TRANSPARENT (-2)
+// Supplies the tilemap word for a background pixel in a margin: x and y are the layer's tilemap
+// coordinates with scroll applied, unwrapped. Returns the word, PPU_MARGIN_TILE_VRAM to read the
+// tilemap as the hardware would, or PPU_MARGIN_TILE_TRANSPARENT.
+typedef int (*PpuMarginTile)(void* context, int layer, int x, int y);
+
 #include "snes.h"
 #include "statehandler.h"
 
@@ -133,6 +143,14 @@ struct Ppu {
   // pixel buffer (xbgr)
   // times 2 for even and odd frame
   uint8_t pixelBuffer[512 * 4 * 239 * 2];
+  // margins: rendered only when marginWidth > 0, never touching the native buffers above
+  int marginWidth;
+  PpuMarginTile marginTile;
+  void* marginContext;
+  uint8_t objMarginPixelBuffer[2 * PPU_MAX_MARGIN];
+  uint8_t objMarginPriorityBuffer[2 * PPU_MAX_MARGIN];
+  // per line, even and odd frame: left margin then right margin, one XRGB word per pixel
+  uint32_t marginBuffer[239 * 2][2 * PPU_MAX_MARGIN];
 };
 
 Ppu* ppu_init(Snes* snes);
@@ -147,5 +165,9 @@ uint8_t ppu_read(Ppu* ppu, uint8_t adr);
 void ppu_write(Ppu* ppu, uint8_t adr, uint8_t val);
 void ppu_latchHV(Ppu* ppu);
 void ppu_putPixels(Ppu* ppu, uint8_t* pixels);
+// width 0 turns the margins off; provider may be NULL to read the tilemap as the hardware would
+void ppu_setMargins(Ppu* ppu, int width, PpuMarginTile provider, void* context);
+// writes (256 + 2 * width) * 2 XRGB words per line, 480 lines, laid out like ppu_putPixels
+void ppu_putWidePixels(Ppu* ppu, uint8_t* pixels);
 
 #endif

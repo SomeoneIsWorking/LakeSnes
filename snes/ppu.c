@@ -71,6 +71,9 @@ static void ppu_handlePixel(Ppu* ppu, int x, int y);
 static int ppu_getPixel(Ppu* ppu, int x, int y, bool sub, int* r, int* g, int* b);
 static uint16_t ppu_getOffsetValue(Ppu* ppu, int col, int row);
 static inline void ppu_getPixelForBgLayer(Ppu* ppu, int x, int y, int layer);
+static inline void ppu_decodeBgPixel(Ppu* ppu, int x, int y, int layer, uint16_t tile);
+static void ppu_evaluateMarginSprites(Ppu* ppu, int line);
+static int ppu_marginIndex(Ppu* ppu, int x);
 static void ppu_handleOPT(Ppu* ppu, int layer, int* lx, int* ly);
 static void ppu_calculateMode7Starts(Ppu* ppu, int y);
 static int ppu_getPixelForMode7(Ppu* ppu, int x, int layer, bool priority);
@@ -81,6 +84,10 @@ static uint16_t ppu_getVramRemap(Ppu* ppu);
 Ppu* ppu_init(Snes* snes) {
   Ppu* ppu = malloc(sizeof(Ppu));
   ppu->snes = snes;
+  ppu->marginWidth = 0;
+  ppu->marginTile = NULL;
+  ppu->marginContext = NULL;
+  memset(ppu->marginBuffer, 0, sizeof(ppu->marginBuffer));
   return ppu;
 }
 
@@ -299,6 +306,25 @@ void ppu_runLine(Ppu* ppu, int line) {
     ppu_handlePixel(ppu, x + 2, line);
     ppu_handlePixel(ppu, x + 3, line);
   }
+  if(ppu->marginWidth > 0) {
+    memset(ppu->objMarginPixelBuffer, 0, sizeof(ppu->objMarginPixelBuffer));
+    if(!ppu->forcedBlank) ppu_evaluateMarginSprites(ppu, line - 1);
+    ppu->layerCache[0] = ppu->layerCache[1] = ppu->layerCache[2] = ppu->layerCache[3] = -1;
+    for(int x = -ppu->marginWidth; x < 0; x++) ppu_handlePixel(ppu, x, line);
+    ppu->layerCache[0] = ppu->layerCache[1] = ppu->layerCache[2] = ppu->layerCache[3] = -1;
+    for(int x = 256; x < 256 + ppu->marginWidth; x++) ppu_handlePixel(ppu, x, line);
+  }
+}
+
+void ppu_setMargins(Ppu* ppu, int width, PpuMarginTile provider, void* context) {
+  ppu->marginWidth = width < 0 ? 0 : (width > PPU_MAX_MARGIN ? PPU_MAX_MARGIN : width);
+  ppu->marginTile = provider;
+  ppu->marginContext = context;
+}
+
+// left margin x -width..-1 at 0..width-1, right margin 256.. at width..
+static int ppu_marginIndex(Ppu* ppu, int x) {
+  return x < 0 ? x + ppu->marginWidth : ppu->marginWidth + (x - 256);
 }
 
 static void ppu_handlePixel(Ppu* ppu, int x, int y) {
@@ -306,13 +332,15 @@ static void ppu_handlePixel(Ppu* ppu, int x, int y) {
   int g = 0, g2 = 0;
   int b = 0, b2 = 0;
   bool halfColor = ppu->halfColor;
+  // window positions are 0-255; a margin takes the state of the nearest edge column
+  int wx = x < 0 ? 0 : (x > 255 ? 255 : x);
   // cache for speed-up
-  ppu->bgWindowState[0] = ppu_getWindowState(ppu, 0, x);
-  ppu->bgWindowState[1] = ppu_getWindowState(ppu, 1, x);
-  ppu->bgWindowState[2] = ppu_getWindowState(ppu, 2, x);
-  ppu->bgWindowState[3] = ppu_getWindowState(ppu, 3, x);
-  ppu->bgWindowState[4] = ppu_getWindowState(ppu, 4, x);
-  ppu->bgWindowState[5] = ppu_getWindowState(ppu, 5, x);
+  ppu->bgWindowState[0] = ppu_getWindowState(ppu, 0, wx);
+  ppu->bgWindowState[1] = ppu_getWindowState(ppu, 1, wx);
+  ppu->bgWindowState[2] = ppu_getWindowState(ppu, 2, wx);
+  ppu->bgWindowState[3] = ppu_getWindowState(ppu, 3, wx);
+  ppu->bgWindowState[4] = ppu_getWindowState(ppu, 4, wx);
+  ppu->bgWindowState[5] = ppu_getWindowState(ppu, 5, wx);
   if(!ppu->forcedBlank) {
     int mainLayer = ppu_getPixel(ppu, x, y, false, &r, &g, &b);
     bool colorWindowState = ppu->bgWindowState[5];
@@ -390,6 +418,13 @@ static void ppu_handlePixel(Ppu* ppu, int x, int y) {
       r2 = r; g2 = g; b2 = b;
     }
   }
+  if(x < 0 || x > 255) {
+    uint32_t *margin = &ppu->marginBuffer[(y - 1) + (ppu->evenFrame ? 0 : 239)][ppu_marginIndex(ppu, x)];
+    *margin = ((((b << 3) | (b >> 2)) * ppu->brightScale) >> 16) << 0 |
+              ((((g << 3) | (g >> 2)) * ppu->brightScale) >> 16) << 8 |
+              ((((r << 3) | (r >> 2)) * ppu->brightScale) >> 16) << 16;
+    return;
+  }
   uint32_t *dest = (uint32_t*)&ppu->pixelBuffer[((y - 1) + (ppu->evenFrame ? 0 : 239)) * 2048 + x * 8];
 
   dest[0] = ((((b2 << 3) | (b2 >> 2)) * ppu->brightScale) >> 16) << 0 |
@@ -447,7 +482,18 @@ static int ppu_getPixel(Ppu* ppu, int x, int y, bool sub, int* r, int* g, int* b
             ppu_handleOPT(ppu, curLayer, &lx, &ly);
           }
           if (lx != ppu->layerCache[curLayer]) {
-            ppu_getPixelForBgLayer(ppu, lx & 0x3ff, ly & 0x3ff, curLayer);
+            int marginTile = PPU_MARGIN_TILE_VRAM;
+            if((x < 0 || x > 255) && ppu->marginTile != NULL) {
+              marginTile = ppu->marginTile(ppu->marginContext, curLayer, lx, ly);
+            }
+            if(marginTile == PPU_MARGIN_TILE_VRAM) {
+              ppu_getPixelForBgLayer(ppu, lx & 0x3ff, ly & 0x3ff, curLayer);
+            } else if(marginTile == PPU_MARGIN_TILE_TRANSPARENT) {
+              ppu->bgPixelBuf[curLayer] = 0;
+              ppu->bgPrioBuf[curLayer] = 0;
+            } else {
+              ppu_decodeBgPixel(ppu, lx & 0x3ff, ly & 0x3ff, curLayer, (uint16_t) marginTile);
+            }
             ppu->layerCache[curLayer] = lx;
           }
           pixel = (ppu->bgPrioBuf[curLayer] == curPriority) ? ppu->bgPixelBuf[curLayer] : 0;
@@ -455,7 +501,10 @@ static int ppu_getPixel(Ppu* ppu, int x, int y, bool sub, int* r, int* g, int* b
       } else {
         // get a pixel from the sprite buffer
         pixel = 0;
-        if(ppu->objPriorityBuffer[x] == curPriority) pixel = ppu->objPixelBuffer[x];
+        if(x < 0 || x > 255) {
+          int m = ppu_marginIndex(ppu, x);
+          if(ppu->objMarginPriorityBuffer[m] == curPriority) pixel = ppu->objMarginPixelBuffer[m];
+        } else if(ppu->objPriorityBuffer[x] == curPriority) pixel = ppu->objPixelBuffer[x];
       }
     }
     if(pixel > 0) {
@@ -531,7 +580,11 @@ static inline void ppu_getPixelForBgLayer(Ppu* ppu, int x, int y, int layer) {
   uint16_t tilemapAdr = ppu->bgLayer[layer].tilemapAdr + (((y >> tileBitsY) & 0x1f) << 5 | ((x >> tileBitsX) & 0x1f));
   if((x & tileHighBitX) && ppu->bgLayer[layer].tilemapWider) tilemapAdr += 0x400;
   if((y & tileHighBitY) && ppu->bgLayer[layer].tilemapHigher) tilemapAdr += ppu->bgLayer[layer].tilemapWider ? 0x800 : 0x400;
-  uint16_t tile = ppu->vram[tilemapAdr & 0x7fff];
+  ppu_decodeBgPixel(ppu, x, y, layer, ppu->vram[tilemapAdr & 0x7fff]);
+}
+
+static inline void ppu_decodeBgPixel(Ppu* ppu, int x, int y, int layer, uint16_t tile) {
+  bool wideTiles = ppu->bgLayer[layer].bigTiles || ppu->mode == 5 || ppu->mode == 6;
   // check priority, get palette
   int tilePrio = (tile >> 13) & 1;
   int paletteNum = (tile & 0x1c00) >> 10;
@@ -622,7 +675,7 @@ static void ppu_calculateMode7Starts(Ppu* ppu, int y) {
 }
 
 static int ppu_getPixelForMode7(Ppu* ppu, int x, int layer, bool priority) {
-  uint8_t rx = ppu->m7xFlip ? 255 - x : x;
+  int rx = ppu->m7xFlip ? 255 - x : x;
   int xPos = (ppu->m7startX + ppu->m7matrix[0] * rx) >> 8;
   int yPos = (ppu->m7startY + ppu->m7matrix[2] * rx) >> 8;
   bool outsideMap = xPos < 0 || xPos >= 1024 || yPos < 0 || yPos >= 1024;
@@ -1175,6 +1228,80 @@ void ppu_write(Ppu* ppu, uint8_t adr, uint8_t val) {
     }
     default: {
       break;
+    }
+  }
+}
+
+// Every sprite on the line, no 32-sprite or 34-sliver limit, drawn into the margins only. A sprite
+// at signed x below -256 + width also shows in the right margin, where a wider screen would show it.
+static void ppu_evaluateMarginSprites(Ppu* ppu, int line) {
+  int width = ppu->marginWidth;
+  for(int i = 127; i >= 0; i--) {
+    uint8_t index = (uint8_t) (((ppu->objPriority ? (ppu->oamAdr & 0xfe) : 0) + i * 2) & 0xff);
+    uint8_t y = ppu->oam[index] >> 8;
+    uint8_t row = line - y;
+    int spriteSize = spriteSizes[ppu->objSize][(ppu->highOam[index >> 3] >> ((index & 7) + 1)) & 1];
+    int spriteHeight = ppu->objInterlace ? spriteSize / 2 : spriteSize;
+    if(row >= spriteHeight) continue;
+    int x = ppu->oam[index] & 0xff;
+    x |= ((ppu->highOam[index >> 3] >> (index & 7)) & 1) << 8;
+    if(x > 255) x -= 512;
+    if(ppu->objInterlace) row = row * 2 + (ppu->evenFrame ? 0 : 1);
+    int tile = ppu->oam[index + 1] & 0xff;
+    int palette = (ppu->oam[index + 1] & 0xe00) >> 9;
+    bool hFlipped = ppu->oam[index + 1] & 0x4000;
+    if(ppu->oam[index + 1] & 0x8000) row = spriteSize - 1 - row;
+    uint16_t objAdr = (ppu->oam[index + 1] & 0x100) ? ppu->objTileAdr2 : ppu->objTileAdr1;
+    for(int copy = 0; copy < 2; copy++) {
+      int base = copy == 0 ? x : x + 512;
+      if(base >= 256 + width || base + spriteSize <= -width) continue;
+      for(int col = 0; col < spriteSize; col += 8) {
+        int usedCol = hFlipped ? spriteSize - 1 - col : col;
+        uint8_t usedTile = (((tile >> 4) + (row / 8)) << 4) | (((tile & 0xf) + (usedCol / 8)) & 0xf);
+        uint16_t plane1 = ppu->vram[(objAdr + usedTile * 16 + (row & 0x7)) & 0x7fff];
+        uint16_t plane2 = ppu->vram[(objAdr + usedTile * 16 + 8 + (row & 0x7)) & 0x7fff];
+        for(int px = 0; px < 8; px++) {
+          int screenCol = base + col + px;
+          bool inMargin = (screenCol >= -width && screenCol < 0) || (screenCol >= 256 && screenCol < 256 + width);
+          if(!inMargin) continue;
+          int shift = hFlipped ? px : 7 - px;
+          int pixel = (plane1 >> shift) & 1;
+          pixel |= ((plane1 >> (8 + shift)) & 1) << 1;
+          pixel |= ((plane2 >> shift) & 1) << 2;
+          pixel |= ((plane2 >> (8 + shift)) & 1) << 3;
+          if(pixel > 0) {
+            int m = ppu_marginIndex(ppu, screenCol);
+            ppu->objMarginPixelBuffer[m] = 0x80 + 16 * palette + pixel;
+            ppu->objMarginPriorityBuffer[m] = (ppu->oam[index + 1] & 0x3000) >> 12;
+          }
+        }
+      }
+    }
+  }
+}
+
+void ppu_putWidePixels(Ppu* ppu, uint8_t* pixels) {
+  int width = ppu->marginWidth;
+  int lineWords = (256 + 2 * width) * 2;
+  size_t lineBytes = (size_t) lineWords * 4;
+  memset(pixels, 0, lineBytes * 480);
+  for(int y = 0; y < (ppu->frameOverscan ? 239 : 224); y++) {
+    int dest = y * 2 + (ppu->frameOverscan ? 2 : 16);
+    int y1 = y, y2 = y + 239;
+    if(!ppu->frameInterlace) {
+      y1 = y + (ppu->evenFrame ? 0 : 239);
+      y2 = y1;
+    }
+    for(int half = 0; half < 2; half++) {
+      int source = half == 0 ? y1 : y2;
+      uint32_t* out = (uint32_t*) (pixels + (size_t) (dest + half) * lineBytes);
+      for(int i = 0; i < width; i++) {
+        out[2 * i] = out[2 * i + 1] = ppu->marginBuffer[source][i];
+      }
+      memcpy(out + 2 * width, &ppu->pixelBuffer[source * 2048], 2048);
+      for(int i = 0; i < width; i++) {
+        out[2 * width + 512 + 2 * i] = out[2 * width + 512 + 2 * i + 1] = ppu->marginBuffer[source][width + i];
+      }
     }
   }
 }
